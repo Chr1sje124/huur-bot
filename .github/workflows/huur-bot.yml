@@ -34,6 +34,13 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add seen.json
-          git diff --cached --quiet || git commit -m "Update seen listings"
-          git push
+
+          git pull --rebase origin main
+
+          if [ -f seen.json ]; then
+            git add seen.json
+            git diff --cached --quiet || git commit -m "Update seen listings"
+            git push
+          else
+            echo "seen.json bestaat nog niet, niets om op te slaan."
+          fi

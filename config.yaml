@@ -1,0 +1,81 @@
+telegram:
+  token: "VIA_GITHUB_SECRET"
+  chat_id: "VIA_GITHUB_SECRET"
+
+filters:
+  city: "Utrecht"
+  max_rent: 2000
+  min_area: 60
+
+check_interval_seconds: 60
+notify_existing_on_first_run: true
+
+sources:
+  rebo:
+    enabled: true
+    urls:
+      - "https://www.rebogroep.nl/nl/particulier/ons-aanbod/huren"
+
+  funda:
+    enabled: true
+    urls:
+      - "https://www.funda.nl/zoeken/huur?selected_area=%5B%22utrecht%22%5D"
+
+  mvgm:
+    enabled: true
+    urls:
+      - "https://ikwilhuren.nu/aanbod/utrecht"
+
+  vesteda:
+    enabled: true
+    urls:
+      - "https://www.vesteda.com/nl/huurwoning-utrecht"
+      - "https://www.vesteda.com/nl/woning-zoeken"
+
+  vbt:
+    enabled: true
+    urls:
+      - "https://vbtverhuurmakelaars.nl/woningen"
+      - "https://vbtverhuurmakelaars.nl/project/wonderwoods-utrecht"
+
+  nmg:
+    enabled: true
+    urls:
+      - "https://nmgwonen.nl/woningen/"
+      - "https://nmgwonen.nl/wilhelminawerf-utrecht/"
+
+    vesteda:
+    enabled: true
+    urls:
+      - "https://www.vesteda.com/nl/huurwoning-utrecht"
+      - "https://www.vesteda.com/nl/woning-zoeken"
+
+  vbt:
+    enabled: true
+    urls:
+      - "https://vbtverhuurmakelaars.nl/woningen"
+
+  nmg:
+    enabled: true
+    urls:
+      - "https://nmgwonen.nl/woningen/"
+
+  holland2stay:
+    enabled: true
+    urls:
+      - "https://www.holland2stay.com/city/utrecht"
+
+  heimstaden:
+    enabled: true
+    urls:
+      - "https://heimstaden.com/nl/huurwoningen/"
+
+  bouwinvest:
+    enabled: false
+    urls:
+      - "https://www.wonenbijbouwinvest.nl/huuraanbod"
+
+  pararius:
+    enabled: false
+    urls:
+      - "https://www.pararius.nl/huurwoningen/utrecht"

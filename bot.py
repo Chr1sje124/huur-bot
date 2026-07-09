@@ -350,9 +350,17 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
         logging.info("Nieuwe match: %s | €%s | %sm2", l.title, l.rent, l.area)
         send_telegram(config, format_message(l))
         sent += 1
+    if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
+        send_telegram(
+            config,
+            f"✅ Bot actief\n"
+            f"{len(listings)} listings gevonden\n"
+            f"{len(matches)} voldoen aan filters\n"
+            f"{sent} nieuwe meldingen verstuurd"
+        )
+    
     save_seen(seen)
     return len(matches), sent
-
 
 def main() -> None:
     parser = argparse.ArgumentParser()

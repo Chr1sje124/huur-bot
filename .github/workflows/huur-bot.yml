@@ -2,7 +2,7 @@ name: Utrecht Huur Bot
 
 on:
   schedule:
-    - cron: "3-59/5 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -47,19 +47,17 @@ jobs:
             exit 0
           fi
 
-          # Wijzigingen tijdelijk parkeren
+          cp seen.json /tmp/seen.json
+          git fetch origin main
+          git reset --hard origin/main
+          cp /tmp/seen.json seen.json
+
           git add seen.json
 
-          # Alleen doorgaan als er daadwerkelijk iets is veranderd
           if git diff --cached --quiet; then
             echo "Geen wijzigingen in seen.json."
             exit 0
           fi
 
           git commit -m "Update seen listings"
-
-          # Haal de nieuwste main op en zet jouw commit er netjes bovenop (rebase)
-          git pull --rebase origin main
-          
-          # Push de wijziging veilig naar GitHub
           git push origin main

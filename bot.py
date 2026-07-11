@@ -7,10 +7,11 @@ import json
 import logging
 import re
 import time
+import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterable, Optional
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
 import yaml
@@ -19,6 +20,7 @@ from bs4 import BeautifulSoup
 BASE_DIR = Path(__file__).resolve().parent
 STATE_FILE = BASE_DIR / "seen.json"
 CONFIG_FILE = BASE_DIR / "config.yaml"
+STATE_VERSION_MARKER = "__stable_url_ids_v2__"
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -45,15 +47,50 @@ class Listing:
 
     @property
     def uid(self) -> str:
-        raw = f"{self.source}|{self.url}|{self.title}|{self.rent}|{self.area}"
+        # Price and area can change while the advert is still the same home.
+        # Using them here caused duplicate Telegram notifications.
+        raw = f"{self.source.lower()}|{canonical_url(self.url)}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+TRACKING_PARAMS = {"gclid", "fbclid", "ref", "source"}
+
+# Actual advert paths observed on each provider. This prevents navigation,
+# projects and marketing cards from being mistaken for available homes.
+SOURCE_LINK_PATTERNS = {
+    "funda": (r"/detail/huur/",),
+    "rebo": (r"/nl/aanbod/",),
+    "mvgm": (r"/aanbod/(?!utrecht/?$)[^?#]+",),
+    "vesteda": (r"/nl/huurwoning[^?#]*/[^/?#]+-\d+/?$",),
+    "vbt": (r"/woning/",),
+    "nmg": (r"/woning/", r"/woningen/[^/?#]+/?$"),
+    "holland2stay": (r"/woningaanbod/[^/?#]+\.html",),
+    "heimstaden": (r"/nl/huurwoningen/[^/?#]+",),
+    "pararius": (r"/(?:appartement|huis|kamer)-te-huur/",),
+}
+
+
+def canonical_url(url: str) -> str:
+    """Return a stable advert URL, without fragments and tracking parameters."""
+    parts = urlsplit(url.strip())
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_") and key.lower() not in TRACKING_PARAMS
+    ]
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, urlencode(query), ""))
 
 
 def load_config() -> dict:
     if not CONFIG_FILE.exists():
         raise SystemExit("config.yaml niet gevonden. Kopieer config.example.yaml naar config.yaml en vul je gegevens in.")
     with CONFIG_FILE.open("r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+        config = yaml.safe_load(f) or {}
+
+        if not isinstance(config, dict):
+            raise SystemExit("config.yaml heeft geen geldige structuur.")
+        config.setdefault("telegram", {})
 
         token = os.getenv("TELEGRAM_TOKEN")
         chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -76,7 +113,12 @@ def load_seen() -> set[str]:
 
 
 def save_seen(seen: set[str]) -> None:
-    STATE_FILE.write_text(json.dumps(sorted(seen), indent=2), encoding="utf-8")
+    # Atomic replace prevents a truncated JSON file when a process is stopped.
+    data = json.dumps(sorted(seen), indent=2) + "\n"
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=BASE_DIR, delete=False) as f:
+        f.write(data)
+        temporary = Path(f.name)
+    temporary.replace(STATE_FILE)
 
 
 
@@ -138,13 +180,39 @@ def likely_listing_blocks(soup: BeautifulSoup) -> list:
     return unique
 
 
+def source_listing_blocks(source: str, soup: BeautifulSoup) -> list:
+    """Find cards containing links that are known to be real adverts."""
+    patterns = SOURCE_LINK_PATTERNS.get(source.lower(), ())
+    if not patterns:
+        return likely_listing_blocks(soup)
+    blocks = []
+    seen = set()
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "")
+        if not any(re.search(pattern, href, re.I) for pattern in patterns):
+            continue
+        block = anchor
+        for parent in anchor.parents:
+            if parent.name in {"article", "li"} or any(
+                token in " ".join(parent.get("class", [])).lower()
+                for token in ("card", "result", "object", "property", "woning", "offer")
+            ):
+                block = parent
+                break
+        marker = id(block)
+        if marker not in seen:
+            blocks.append(block)
+            seen.add(marker)
+    return blocks
+
+
 
 
 def dedupe_listings(listings: Iterable[Listing]) -> list[Listing]:
     out = []
     seen = set()
     for l in listings:
-        key = l.url.split("?")[0].rstrip("/")
+        key = canonical_url(l.url)
         if key not in seen:
             out.append(l)
             seen.add(key)
@@ -169,9 +237,19 @@ def fetch(url: str) -> str:
         "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8",
         "Cache-Control": "no-cache",
     }
-    r = requests.get(url, headers=headers, timeout=25)
-    r.raise_for_status()
-    return r.text
+    last_error = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=headers, timeout=(8, 25))
+            r.raise_for_status()
+            if "text/html" not in r.headers.get("Content-Type", "text/html"):
+                raise RuntimeError(f"onverwacht content-type: {r.headers.get('Content-Type')}")
+            return r.text
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(f"ophalen mislukt na 3 pogingen: {last_error}")
 
 
 def extract_jsonld_listings(source: str, base_url: str, soup: BeautifulSoup) -> list[Listing]:
@@ -229,7 +307,7 @@ def extract_from_blocks(source: str, base_url: str, soup: BeautifulSoup) -> list
 
     listings.extend(extract_jsonld_listings(source, base_url, soup))
 
-    for block in likely_listing_blocks(soup):
+    for block in source_listing_blocks(source, soup):
         text = clean_text(block.get_text(" "))
         rent = parse_euro(text)
         area = parse_area(text)
@@ -240,9 +318,13 @@ def extract_from_blocks(source: str, base_url: str, soup: BeautifulSoup) -> list
             continue
 
         best_link = links[0]
+        patterns = SOURCE_LINK_PATTERNS.get(source.lower(), ())
         for a in links:
             href = a.get("href", "")
-            if any(word in href.lower() for word in ["woning", "huur", "aanbod", "appartement", "object"]):
+            if patterns and any(re.search(pattern, href, re.I) for pattern in patterns):
+                best_link = a
+                break
+            if not patterns and any(word in href.lower() for word in ["woning", "huur", "aanbod", "appartement", "object"]):
                 best_link = a
                 break
 
@@ -288,7 +370,9 @@ def scrape_all(config: dict) -> list[Listing]:
 
         urls = cfg.get("urls", [])
         logging.info("Check %s (%d url's)", source, len(urls))
-        results.extend(scrape_generic(source.upper(), urls))
+        items = scrape_generic(source, urls)
+        logging.info("Bron %s leverde %d kandidaat-woningen", source, len(items))
+        results.extend(items)
 
     return dedupe_listings(results)
 
@@ -326,11 +410,24 @@ def format_message(l: Listing) -> str:
 def send_telegram(config: dict, text: str) -> None:
     token = str(config["telegram"]["token"]).strip()
     chat_id = str(config["telegram"]["chat_id"]).strip()
-    if not token or "VUL_HIER" in token or not chat_id or "VUL_HIER" in chat_id:
+    placeholders = {"", "VIA_GITHUB_SECRET", "VUL_HIER_IN"}
+    if token in placeholders or chat_id in placeholders:
         raise RuntimeError("Telegram token/chat_id ontbreken in config.yaml")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    r = requests.post(url, json={"chat_id": chat_id, "text": text, "disable_web_page_preview": False}, timeout=20)
-    r.raise_for_status()
+    last_error = None
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json={"chat_id": chat_id, "text": text, "disable_web_page_preview": False}, timeout=(8, 20))
+            r.raise_for_status()
+            result = r.json()
+            if not result.get("ok"):
+                raise RuntimeError(result.get("description", "Telegram gaf geen bevestiging"))
+            return
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(f"Telegram versturen mislukt na 3 pogingen: {last_error}")
 
 
 def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[int, int]:
@@ -343,12 +440,16 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
     for l in matches:
         if l.uid in seen:
             continue
-        seen.add(l.uid)
         if first_run and not notify_existing:
+            seen.add(l.uid)
             logging.info("Bestaande match gemarkeerd als gezien: %s", l.title)
             continue
         logging.info("Nieuwe match: %s | €%s | %sm2", l.title, l.rent, l.area)
         send_telegram(config, format_message(l))
+        # Only mark as seen after Telegram has accepted the message. Save after
+        # every success, so a later failure cannot cause duplicate messages.
+        seen.add(l.uid)
+        save_seen(seen)
         sent += 1
     if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
         send_telegram(
@@ -359,6 +460,7 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
             f"{sent} nieuwe meldingen verstuurd"
         )
     
+    seen.add(STATE_VERSION_MARKER)
     save_seen(seen)
     return len(matches), sent
 
@@ -376,7 +478,9 @@ def main() -> None:
         return
 
     seen = load_seen()
-    first = not STATE_FILE.exists()
+    # Existing releases used unstable IDs containing price and area. On the
+    # first run after this upgrade, seed the new URL IDs without flooding chat.
+    first = not STATE_FILE.exists() or STATE_VERSION_MARKER not in seen
 
     if args.once:
         matches, sent = check_once(config, seen, first_run=first)

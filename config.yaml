@@ -9,7 +9,8 @@ filters:
 
 check_interval_seconds: 60
 notify_existing_on_first_run: false
-send_summary_when_no_new: true
+# Zet alleen aan voor debugging; anders ontvang je bij iedere controle spam.
+send_summary_when_no_new: false
 
 sources:
   rebo:
@@ -46,14 +47,16 @@ sources:
       - "https://nmgwonen.nl/wilhelminawerf-utrecht/"
 
   holland2stay:
-    enabled: true
+    # De stadspagina toont gebouwen, niet het actuele boekbare aanbod.
+    # Zet pas aan met een URL die individuele /woningaanbod/-links bevat.
+    enabled: false
     urls:
       - "https://www.holland2stay.com/city/utrecht"
 
   heimstaden:
     enabled: true
     urls:
-      - "https://heimstaden.com/nl/huurwoningen/"
+      - "https://heimstaden.com/nl/huurwoningen/?text=Utrecht"
 
   bouwinvest:
     enabled: false
@@ -61,6 +64,6 @@ sources:
       - "https://www.wonenbijbouwinvest.nl/huuraanbod"
 
   pararius:
-    enabled: false
+    enabled: true
     urls:
       - "https://www.pararius.nl/huurwoningen/utrecht"

@@ -8,9 +8,9 @@ filters:
   min_area: 60
 
 check_interval_seconds: 60
-notify_existing_on_first_run: false
+notify_existing_on_first_run: true
 # Zet alleen aan voor debugging; anders ontvang je bij iedere controle spam.
-send_summary_when_no_new: false
+send_summary_when_no_new: true
 
 sources:
   rebo:

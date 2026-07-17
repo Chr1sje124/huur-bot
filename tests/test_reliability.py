@@ -54,13 +54,23 @@ class DedupeAndFilterTests(unittest.TestCase):
 
 class HttpHealthTests(unittest.TestCase):
     def test_block_signals(self):
-        for text in ("captcha required", "Cloudflare challenge", "Access denied", "verify you are human"):
+        for text in ("Access denied because this request was blocked", "verify you are human before continuing"):
             with self.assertRaises(bot.BlockedPageError):
                 bot.validate_html_response("<html>" + text + "</html>", source="x", url="https://x.nl")
 
     def test_short_html(self):
         with self.assertRaises(bot.InvalidHtmlResponseError):
             bot.validate_html_response("<html>ok</html>", source="x", url="https://x.nl")
+
+    def test_security_library_words_are_not_automatically_blocked(self):
+        html = "<html><head><title>Woningen</title><script>const vendor='cloudflare captcha';</script></head><body><h1>Beschikbare huurwoningen</h1><p>Bekijk hieronder ons actuele woningaanbod in Utrecht.</p></body></html>"
+        bot.validate_html_response(html, source="x", url="https://x.nl")
+
+    def test_funda_human_verification_is_blocked_and_keeps_html(self):
+        html = "<html><title>Je bent bijna op de pagina die je zoekt [funda]</title><body><p>Daarom moeten we soms verifiëren dat onze bezoekers echte mensen zijn.</p></body></html>"
+        with self.assertRaises(bot.BlockedPageError) as raised:
+            bot.validate_html_response(html, source="funda", url="https://funda.nl")
+        self.assertEqual(getattr(raised.exception, "html"), html)
 
     @patch.object(bot.time, "sleep")
     def test_503_and_retry_after_are_retried(self, sleep):
@@ -130,6 +140,16 @@ class PhaseOneAndTwoTests(unittest.TestCase):
         self.assertEqual(bot.classify_listing(missing, filters), "possible_match")
         self.assertEqual(bot.classify_listing(unknown, filters), "possible_match")
         self.assertEqual(bot.classify_listing(rented, filters), "rejected")
+
+    def test_utrecht_search_context_is_inherited(self):
+        html = '<article><a href="/detail/huur/object/1">Teststraat 1</a><span>€ 1.500 per maand</span><span>70 m²</span></article>'
+        listing = bot.extract_from_blocks("funda", "https://www.funda.nl/zoeken/huur?selected_area=utrecht", bot.BeautifulSoup(html, "lxml"))[0]
+        self.assertEqual(listing.city, "Utrecht")
+
+    def test_vbt_sapper_payload(self):
+        html = r'''<script>__SAPPER__={houses:[{address:{city:"Utrecht",house:"Testlaan 10"},prices:{rental:{price:1650,type:"month"}},plot:72,rooms:3,acceptance:"2026-08-01",url:"\u002Fwoning\u002Futrecht-testlaan-10"}]}</script>'''
+        listing = bot.extract_vbt_embedded("https://vbtverhuurmakelaars.nl/woningen", html)[0]
+        self.assertEqual((listing.city, listing.rent, listing.area, listing.rooms), ("Utrecht", 1650, 72, 3))
 
 
 class ConfigStateSummaryTests(unittest.TestCase):

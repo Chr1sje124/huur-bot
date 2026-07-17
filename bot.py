@@ -461,11 +461,27 @@ BLOCK_SIGNALS = ("captcha", "access denied", "verify you are human", "cloudflare
 
 
 def validate_html_response(html: str, *, source: str, url: str) -> None:
-    lower = html.lower()
-    signal = next((item for item in BLOCK_SIGNALS if item in lower), None)
-    if signal or "accepteer cookies om verder te gaan" in lower:
-        raise BlockedPageError(f"{source}: blokkade bij {url} ({signal or 'cookiemuur'})")
-    if len(clean_text(BeautifulSoup(html, "lxml").get_text(" "))) < 20:
+    soup = BeautifulSoup(html, "lxml")
+    visible = clean_text(soup.get_text(" ")).lower()
+    title = clean_text(soup.title.get_text(" ") if soup.title else "").lower()
+    hard_signals = (
+        "verify you are human", "verifiëren dat onze bezoekers echte mensen zijn",
+        "verifiã«ren dat onze bezoekers echte mensen zijn", "je bent bijna op de pagina die je zoekt",
+        "access denied", "toegang geweigerd", "checking your browser", "attention required",
+    )
+    signal = next((item for item in hard_signals if item in f"{title} {visible}"), None)
+    challenge_element = soup.select_one("#cf-chl-widget, .cf-challenge, #challenge-form, [name='cf-turnstile-response']")
+    has_listing_link = any(re.search(r"/(?:woning|woningen|aanbod|detail|appartement|huis)-?", anchor.get("href", ""), re.I) for anchor in soup.find_all("a", href=True))
+    soft_challenge = any(word in visible for word in ("captcha", "cloudflare")) and len(visible) < 2000 and not has_listing_link
+    cookie_wall = "accepteer cookies om verder te gaan" in visible and len(visible) < 2000
+    if signal or challenge_element is not None or soft_challenge or cookie_wall:
+        reason = signal or ("captcha/cloudflare" if soft_challenge else "challenge-element")
+        if cookie_wall:
+            reason = "cookiemuur"
+        exc = BlockedPageError(f"{source}: blokkade bij {url} ({reason})")
+        setattr(exc, "html", html)
+        raise exc
+    if len(visible) < 20:
         raise InvalidHtmlResponseError(f"{source}: opvallend korte HTML bij {url}")
 
 
@@ -493,6 +509,41 @@ def write_debug_artifact(source: str, url: str, error: str, html: str = "") -> P
     return path
 
 
+def extract_vbt_embedded(base_url: str, html: str) -> list[Listing]:
+    """Extract houses from VBT's server-rendered Sapper payload."""
+    listings: list[Listing] = []
+    url_pattern = re.compile(r'url:\s*"([^"\n]*(?:\\u002F|/)woning(?:\\u002F|/)[^"\n]+)"', re.I)
+    for match in url_pattern.finditer(html):
+        start = html.rfind("address:{", 0, match.start())
+        if start < 0:
+            continue
+        segment = html[start:match.end()]
+        raw_url = match.group(1).replace("\\u002F", "/").replace("\\/", "/")
+        url = urljoin(base_url, raw_url)
+        slug = urlsplit(url).path.rstrip("/").split("/")[-1]
+        title = clean_text(slug.replace("-", " ")).title()
+        house_match = re.search(r'house:\s*"([^"]+)"', segment)
+        city_match = re.search(r'city:\s*"([^"]+)"', segment)
+        rent_match = re.search(r'rental:\s*\{price:\s*([0-9]{3,5})', segment)
+        area_match = re.search(r'plot:\s*([0-9]{1,4})', segment)
+        rooms_match = re.search(r'rooms:\s*([0-9]{1,2})', segment)
+        acceptance_match = re.search(r'acceptance:\s*"([^"]+)"', segment)
+        city = city_match.group(1) if city_match else ("Utrecht" if "utrecht" in slug.lower() else None)
+        if house_match:
+            title = clean_text(house_match.group(1))
+            if city:
+                title = f"{title}, {city}"
+        listings.append(Listing(
+            source="vbt", title=title[:140], url=url, city=city,
+            rent=int(rent_match.group(1)) if rent_match else None,
+            area=int(area_match.group(1)) if area_match else None,
+            rooms=int(rooms_match.group(1)) if rooms_match else None,
+            availability="unknown", available_from=acceptance_match.group(1) if acceptance_match else None,
+            postcode=parse_postcode(segment),
+        ))
+    return dedupe_listings(listings)
+
+
 def scrape_generic(source: str, urls: list[str], options: Optional[dict] = None) -> SourceResult:
     options = options or {}
     result = SourceResult(source=source)
@@ -504,6 +555,11 @@ def scrape_generic(source: str, urls: list[str], options: Optional[dict] = None)
             result.requests_ok += 1
             soup = BeautifulSoup(html, "lxml")
             items = extract_from_blocks(source, url, soup)
+            if source.lower() == "vbt":
+                items = dedupe_listings([*items, *extract_vbt_embedded(url, html)])
+                filters = options.get("_filters")
+                if filters:
+                    items = [item for item in items if is_utrecht_location(item, filters)]
             result.raw_candidates += len(items)
             all_items.extend(items)
             if not items and not re.search(r"geen (?:woningen|resultaten|aanbod)|0 resultaten", html, re.I):
@@ -514,7 +570,7 @@ def scrape_generic(source: str, urls: list[str], options: Optional[dict] = None)
             result.requests_failed += 1
             result.blocked = True
             result.errors.append(str(e))
-            write_debug_artifact(source, url, str(e))
+            write_debug_artifact(source, url, str(e), getattr(e, "html", ""))
         except (requests.RequestException, RuntimeError) as e:
             result.requests_failed += 1
             result.errors.append(str(e))
@@ -583,6 +639,8 @@ def extract_jsonld_listings(source: str, base_url: str, soup: BeautifulSoup) -> 
             city = None
             if isinstance(address, dict):
                 city = address.get("addressLocality")
+            if not city and "utrecht" in base_url.lower():
+                city = "Utrecht"
 
             if name and url:
                 listings.append(
@@ -641,7 +699,7 @@ def extract_from_blocks(source: str, base_url: str, soup: BeautifulSoup) -> list
         if not title or len(title) < 4:
             title = text[:90]
 
-        city = "Utrecht" if "utrecht" in f"{text} {url}".lower() else None
+        city = "Utrecht" if "utrecht" in f"{text} {url} {base_url}".lower() else None
         availability, available_from = parse_availability(text)
 
         listings.append(
@@ -688,7 +746,7 @@ def extract_specialized_listings(source: str, base_url: str, soup: BeautifulSoup
             url = urljoin(base_url, link["href"])
             availability, available_from = parse_availability(text)
             postcode = parse_postcode(text)
-            city = "Utrecht" if "utrecht" in f"{text} {url}".lower() or (postcode and postcode[:4] in UTRECHT_POSTCODE_PREFIXES) else None
+            city = "Utrecht" if "utrecht" in f"{text} {url} {base_url}".lower() or (postcode and postcode[:4] in UTRECHT_POSTCODE_PREFIXES) else None
             listings.append(Listing(source, title[:140], url, city, parse_rent(text), parse_area(text), parse_rooms(text), availability, available_from, postcode))
     return dedupe_listings(listings)
 
@@ -780,7 +838,7 @@ def scrape_specialized(source: str, urls: list[str], options: Optional[dict] = N
                 all_items.extend(new_items)
                 known_urls.update(canonical_url(item.url) for item in new_items)
             except BlockedPageError as exc:
-                result.requests_failed += 1; result.blocked = True; result.errors.append(str(exc)); write_debug_artifact(source, url, str(exc)); stop_source = True; break
+                result.requests_failed += 1; result.blocked = True; result.errors.append(str(exc)); write_debug_artifact(source, url, str(exc), getattr(exc, "html", "")); stop_source = True; break
             except (requests.RequestException, RuntimeError) as exc:
                 result.requests_failed += 1; result.errors.append(str(exc)); write_debug_artifact(source, url, str(exc)); break
         if stop_source:
@@ -820,7 +878,8 @@ def scrape_all(config: dict) -> list[Listing]:
 
         urls = cfg.get("urls", [])
         logging.info("Check %s (%d url's)", source, len(urls))
-        source_result = SCRAPERS.get(source.lower(), scrape_generic)(source, urls, cfg)
+        options = {**cfg, "_filters": config.get("filters", {})}
+        source_result = SCRAPERS.get(source.lower(), scrape_generic)(source, urls, options)
         source_result.finalize(config.get("filters", {}))
         logging.info("Bron %s: requests %d/%d, kandidaten %d, uniek %d, compleet %d, matches %d, status %s", source, source_result.requests_ok, source_result.urls_attempted, source_result.raw_candidates, source_result.unique_listings, source_result.complete_listings, source_result.matches, source_result.status)
         source_results.append(source_result)
@@ -1057,6 +1116,8 @@ def check_once(
         and listing.area < min_area
         for listing in listings
     )
+    wrong_city = rejections["wrong_city"]
+    unavailable = rejections["unavailable"]
 
     logging.info(
         "%d listings gevonden, %d voldoen aan filters | "
@@ -1141,12 +1202,15 @@ def check_once(
             config,
             f"✅ Bot actief\n"
             f"{len(listings)} listings gevonden\n"
-            f"{len(matches)} voldoen aan filters\n\n"
+            f"{len(exact_matches)} exacte matches\n"
+            f"{len(possible_matches)} mogelijke matches\n\n"
             f"Diagnose:\n"
+            f"• Verkeerde plaats: {wrong_city}\n"
             f"• Prijs ontbreekt: {missing_rent}\n"
             f"• Oppervlakte ontbreekt: {missing_area}\n"
             f"• Boven maximale huur: {over_max_rent}\n"
             f"• Onder minimale oppervlakte: {under_min_area}\n\n"
+            f"• Niet beschikbaar: {unavailable}\n\n"
             f"{sent} nieuwe meldingen verstuurd",
         )
 

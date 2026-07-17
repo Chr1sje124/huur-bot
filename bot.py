@@ -450,7 +450,11 @@ def send_telegram(config: dict, text: str) -> None:
     raise RuntimeError(f"Telegram versturen mislukt na 3 pogingen: {last_error}")
 
 
-def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[int, int]:
+def check_once(
+    config: dict,
+    seen: set[str],
+    first_run: bool = False,
+) -> tuple[int, int]:
     listings = scrape_all(config)
     filters = config.get("filters", {})
 
@@ -460,18 +464,28 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
         if matches_filters(listing, filters)
     ]
 
-    missing_rent = sum(listing.rent is None for listing in listings)
-    missing_area = sum(listing.area is None for listing in listings)
+    missing_rent = sum(
+        listing.rent is None
+        for listing in listings
+    )
+
+    missing_area = sum(
+        listing.area is None
+        for listing in listings
+    )
+
+    max_rent = int(filters.get("max_rent", 999999))
+    min_area = int(filters.get("min_area", 0))
 
     over_max_rent = sum(
         listing.rent is not None
-        and listing.rent > int(filters.get("max_rent", 999999))
+        and listing.rent > max_rent
         for listing in listings
     )
 
     under_min_area = sum(
         listing.area is not None
-        and listing.area < int(filters.get("min_area", 0))
+        and listing.area < min_area
         for listing in listings
     )
 
@@ -487,10 +501,39 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
         under_min_area,
     )
 
-    # Laat hier je bestaande verzendlogica staan
     sent = 0
+    notify_existing = bool(
+        config.get("notify_existing_on_first_run", True)
+    )
 
-    # ... bestaande code die matches verwerkt en sent verhoogt ...
+    for listing in matches:
+        if listing.uid in seen:
+            continue
+
+        if first_run and not notify_existing:
+            seen.add(listing.uid)
+            logging.info(
+                "Bestaande match gemarkeerd als gezien: %s",
+                listing.title,
+            )
+            continue
+
+        logging.info(
+            "Nieuwe match: %s | €%s | %sm2",
+            listing.title,
+            listing.rent,
+            listing.area,
+        )
+
+        send_telegram(
+            config,
+            format_message(listing),
+        )
+
+        # Pas als Telegram succesvol is, markeren we de woning als gezien.
+        seen.add(listing.uid)
+        save_seen(seen)
+        sent += 1
 
     if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
         send_telegram(
@@ -503,8 +546,11 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
             f"• Oppervlakte ontbreekt: {missing_area}\n"
             f"• Boven maximale huur: {over_max_rent}\n"
             f"• Onder minimale oppervlakte: {under_min_area}\n\n"
-            f"{sent} nieuwe meldingen verstuurd"
+            f"{sent} nieuwe meldingen verstuurd",
         )
+
+    seen.add(STATE_VERSION_MARKER)
+    save_seen(seen)
 
     return len(matches), sent
 

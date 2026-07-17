@@ -460,15 +460,8 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
         if matches_filters(listing, filters)
     ]
 
-    missing_rent = sum(
-        listing.rent is None
-        for listing in listings
-    )
-
-    missing_area = sum(
-        listing.area is None
-        for listing in listings
-    )
+    missing_rent = sum(listing.rent is None for listing in listings)
+    missing_area = sum(listing.area is None for listing in listings)
 
     over_max_rent = sum(
         listing.rent is not None
@@ -494,35 +487,26 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
         under_min_area,
     )
 
+    # Laat hier je bestaande verzendlogica staan
     sent = 0
-    notify_existing = bool(config.get("notify_existing_on_first_run", True))
-    for l in matches:
-        if l.uid in seen:
-            continue
-        if first_run and not notify_existing:
-            seen.add(l.uid)
-            logging.info("Bestaande match gemarkeerd als gezien: %s", l.title)
-            continue
-        logging.info("Nieuwe match: %s | €%s | %sm2", l.title, l.rent, l.area)
-        send_telegram(config, format_message(l))
-        # Only mark as seen after Telegram has accepted the message. Save after
-        # every success, so a later failure cannot cause duplicate messages.
-        seen.add(l.uid)
-        save_seen(seen)
-        sent += 1
-if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
-    send_telegram(
-        config,
-        f"✅ Bot actief\n"
-        f"{len(listings)} listings gevonden\n"
-        f"{len(matches)} voldoen aan filters\n\n"
-        f"Diagnose:\n"
-        f"• Prijs ontbreekt: {missing_rent}\n"
-        f"• Oppervlakte ontbreekt: {missing_area}\n"
-        f"• Boven maximale huur: {over_max_rent}\n"
-        f"• Onder minimale oppervlakte: {under_min_area}\n\n"
-        f"{sent} nieuwe meldingen verstuurd"
-    )
+
+    # ... bestaande code die matches verwerkt en sent verhoogt ...
+
+    if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
+        send_telegram(
+            config,
+            f"✅ Bot actief\n"
+            f"{len(listings)} listings gevonden\n"
+            f"{len(matches)} voldoen aan filters\n\n"
+            f"Diagnose:\n"
+            f"• Prijs ontbreekt: {missing_rent}\n"
+            f"• Oppervlakte ontbreekt: {missing_area}\n"
+            f"• Boven maximale huur: {over_max_rent}\n"
+            f"• Onder minimale oppervlakte: {under_min_area}\n\n"
+            f"{sent} nieuwe meldingen verstuurd"
+        )
+
+    return len(matches), sent
 
 def main() -> None:
     parser = argparse.ArgumentParser()

@@ -166,6 +166,14 @@ class PhaseOneAndTwoTests(unittest.TestCase):
         listing = bot.extract_vbt_embedded("https://vbtverhuurmakelaars.nl/woningen", html)[0]
         self.assertEqual((listing.city, listing.rent, listing.area, listing.rooms), ("Utrecht", 1650, 72, 3))
 
+    def test_one_empty_source_url_does_not_warn_when_another_has_results(self):
+        listing = bot.Listing("vbt", "Woning Utrecht", "https://vbtverhuurmakelaars.nl/woning/utrecht-test-1", "Utrecht", 1500, 70)
+        pages = ["<html><body>Een pagina zonder actueel aanbod maar met voldoende tekst voor validatie.</body></html>", "<html><body>Een resultaatpagina met voldoende geldige inhoud voor verwerking.</body></html>"]
+        with patch.object(bot, "fetch", side_effect=pages), patch.object(bot, "extract_from_blocks", side_effect=[[], [listing]]), patch.object(bot, "extract_vbt_embedded", return_value=[]):
+            result = bot.scrape_generic("vbt", ["https://vbtverhuurmakelaars.nl/woningen", "https://vbtverhuurmakelaars.nl/project/utrecht"], {"enrich_details": False})
+        self.assertEqual(result.unique_listings, 1)
+        self.assertEqual(result.errors, [])
+
 
 class ConfigStateSummaryTests(unittest.TestCase):
     def valid_config(self):
@@ -196,6 +204,15 @@ class ConfigStateSummaryTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertIn("evil\\|source", text)
             self.assertIn("Prijs ontbreekt | 2", text)
+
+    def test_mocked_check_does_not_pollute_actions_summary(self):
+        listing = bot.Listing("test", "Woning Utrecht", "https://x.nl/1", "Utrecht", 1500, 70, availability="available")
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            config = {"filters": {"city": "Utrecht", "max_rent": 2000, "min_area": 60}}
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}), patch.object(bot, "scrape_all", return_value=[listing]), patch.object(bot, "send_telegram"), patch.object(bot, "save_seen"):
+                bot.check_once(config, set())
+            self.assertFalse(summary.exists())
 
     def test_debug_artifact_masks_secret_and_limits_html(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(bot, "DEBUG_DIR", Path(directory)):

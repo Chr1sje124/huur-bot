@@ -564,6 +564,7 @@ def scrape_generic(source: str, urls: list[str], options: Optional[dict] = None)
     options = options or {}
     result = SourceResult(source=source)
     all_items: list[Listing] = []
+    unexpected_empty_pages: list[tuple[str, str]] = []
     for url in urls:
         result.urls_attempted += 1
         try:
@@ -579,9 +580,7 @@ def scrape_generic(source: str, urls: list[str], options: Optional[dict] = None)
             result.raw_candidates += len(items)
             all_items.extend(items)
             if not items and not re.search(r"geen (?:woningen|resultaten|aanbod)|0 resultaten", html, re.I):
-                error = f"geen kandidaten voor {url}; website-structuur mogelijk gewijzigd"
-                result.errors.append(error)
-                write_debug_artifact(source, url, error, html)
+                unexpected_empty_pages.append((url, html))
         except BlockedPageError as e:
             result.requests_failed += 1
             result.blocked = True
@@ -592,6 +591,11 @@ def scrape_generic(source: str, urls: list[str], options: Optional[dict] = None)
             result.errors.append(str(e))
             write_debug_artifact(source, url, str(e))
             logging.warning("%s mislukt voor %s: %s", source, url, e)
+    if not all_items:
+        for url, html in unexpected_empty_pages:
+            error = f"geen kandidaten voor {url}; website-structuur mogelijk gewijzigd"
+            result.errors.append(error)
+            write_debug_artifact(source, url, error, html)
     result.listings = dedupe_listings(all_items)
     if options.get("enrich_details", False):
         result.listings = enrich_listing_details(source, result.listings, result, max(0, int(options.get("max_detail_requests", 5))))
@@ -1247,7 +1251,8 @@ def check_once(
     if removed:
         logging.info("%d verouderde state-records verwijderd", removed)
     save_seen(seen)
-    write_github_summary(source_results, rejections, sent, run_status)
+    if source_results:
+        write_github_summary(source_results, rejections, sent, run_status)
     if source_results and run_status == "failed":
         raise ScrapeHealthError("alle actieve bronnen zijn technisch mislukt of geblokkeerd")
 

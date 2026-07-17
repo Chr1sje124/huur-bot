@@ -510,7 +510,7 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
         seen.add(l.uid)
         save_seen(seen)
         sent += 1
-    if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
+if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
     send_telegram(
         config,
         f"✅ Bot actief\n"

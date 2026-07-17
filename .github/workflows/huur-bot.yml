@@ -2,7 +2,7 @@ name: Utrecht Huur Bot
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2-59/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -27,6 +27,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -34,11 +35,23 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
+      - name: Check Python syntax
+        run: python -m compileall -q bot.py tests
+
       - name: Run bot once
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python bot.py --once
+
+      - name: Upload veilige scrape-diagnose
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-debug-${{ github.run_id }}
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Save seen.json
         run: |
@@ -50,11 +63,6 @@ jobs:
             exit 0
           fi
 
-          cp seen.json /tmp/seen.json
-          git fetch origin main
-          git reset --hard origin/main
-          cp /tmp/seen.json seen.json
-
           git add seen.json
 
           if git diff --cached --quiet; then
@@ -62,5 +70,6 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Update seen listings"
+          git commit -m "chore: update huur-bot state"
+          git pull --rebase origin main
           git push origin main

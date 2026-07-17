@@ -6,42 +6,88 @@ filters:
   city: "Utrecht"
   max_rent: 2000
   min_area: 60
+  allow_missing_rent: false
+  allow_missing_area: false
+  location_terms:
+    - "Utrecht"
+    - "Leidsche Rijn"
+    - "Vleuten"
+    - "De Meern"
+    - "Haarzuilens"
+    - "Lunetten"
+    - "Overvecht"
+    - "Kanaleneiland"
+    - "Zuilen"
+    - "Tuindorp"
+    - "Wittevrouwen"
+    - "Lombok"
+    - "Oog in Al"
+    - "Terwijde"
+    - "Vleuterweide"
+    - "Hoograven"
 
 check_interval_seconds: 60
 notify_existing_on_first_run: true
 # Zet alleen aan voor debugging; anders ontvang je bij iedere controle spam.
 send_summary_when_no_new: true
 
+notifications:
+  # De nieuwe sleutel heeft voorrang op send_summary_when_no_new.
+  send_no_new_summary: true
+  notify_on_source_failure: true
+  notify_on_recovery: true
+  source_failure_repeat_hours: 12
+  notify_on_price_drop: true
+  notify_on_price_increase: false
+  send_possible_matches: true
+
+state:
+  stale_after_days: 60
+
 sources:
   rebo:
     enabled: true
+    enrich_details: true
+    max_detail_requests: 5
     urls:
       - "https://www.rebogroep.nl/nl/particulier/ons-aanbod/huren"
 
   funda:
     enabled: true
+    max_pages: 3
+    enrich_details: true
+    max_detail_requests: 10
     urls:
       - "https://www.funda.nl/zoeken/huur?selected_area=%5B%22utrecht%22%5D"
 
   mvgm:
     enabled: true
+    enrich_details: true
+    max_detail_requests: 5
     urls:
       - "https://ikwilhuren.nu/aanbod/utrecht"
 
   vesteda:
     enabled: true
+    max_pages: 3
+    enrich_details: true
+    max_detail_requests: 10
     urls:
       - "https://www.vesteda.com/nl/huurwoning-utrecht"
       - "https://www.vesteda.com/nl/woning-zoeken"
 
   vbt:
     enabled: true
+    enrich_details: true
+    max_detail_requests: 5
     urls:
       - "https://vbtverhuurmakelaars.nl/woningen"
       - "https://vbtverhuurmakelaars.nl/project/wonderwoods-utrecht"
 
   nmg:
     enabled: true
+    enrich_details: true
+    max_detail_requests: 5
     urls:
       - "https://nmgwonen.nl/woningen/"
       - "https://nmgwonen.nl/wilhelminawerf-utrecht/"
@@ -55,6 +101,8 @@ sources:
 
   heimstaden:
     enabled: true
+    enrich_details: true
+    max_detail_requests: 5
     urls:
       - "https://heimstaden.com/nl/huurwoningen/?text=Utrecht"
 
@@ -65,5 +113,31 @@ sources:
 
   pararius:
     enabled: true
+    max_pages: 3
+    enrich_details: true
+    max_detail_requests: 10
     urls:
       - "https://www.pararius.nl/huurwoningen/utrecht"
+
+  # Nieuwe regionale bronprofielen. Eerst handmatig live valideren: deze sites
+  # kunnen login, JavaScript of toewijzingsvoorwaarden vereisen.
+  woningnet:
+    enabled: false
+    enrich_details: true
+    max_detail_requests: 5
+    urls:
+      - "https://www.woningnetregioutrecht.nl/woningaanbod/"
+
+  woonin:
+    enabled: false
+    enrich_details: true
+    max_detail_requests: 5
+    urls:
+      - "https://www.woonin.nl/ik-zoek/een-woning/"
+
+  boex:
+    enabled: false
+    enrich_details: true
+    max_detail_requests: 5
+    urls:
+      - "https://www.boex.nl/ik-zoek/een-woning/"

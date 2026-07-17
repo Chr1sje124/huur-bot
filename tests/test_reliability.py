@@ -141,10 +141,25 @@ class PhaseOneAndTwoTests(unittest.TestCase):
         self.assertEqual(bot.classify_listing(unknown, filters), "possible_match")
         self.assertEqual(bot.classify_listing(rented, filters), "rejected")
 
-    def test_utrecht_search_context_is_inherited(self):
+    def test_search_context_does_not_override_listing_location(self):
         html = '<article><a href="/detail/huur/object/1">Teststraat 1</a><span>€ 1.500 per maand</span><span>70 m²</span></article>'
         listing = bot.extract_from_blocks("funda", "https://www.funda.nl/zoeken/huur?selected_area=utrecht", bot.BeautifulSoup(html, "lxml"))[0]
-        self.assertEqual(listing.city, "Utrecht")
+        self.assertIsNone(listing.city)
+
+    def test_jsonld_homepage_and_search_pagination_are_not_listings(self):
+        html = '<script type="application/ld+json">{"name":"NMG Wonen","url":"https://nmgwonen.nl/"}</script>'
+        self.assertEqual(bot.extract_jsonld_listings("nmg", "https://nmgwonen.nl/woningen/", bot.BeautifulSoup(html, "lxml")), [])
+        self.assertFalse(bot.is_valid_listing_url("mvgm", "https://ikwilhuren.nu/aanbod/utrecht?page=2", "https://ikwilhuren.nu/aanbod/utrecht"))
+        self.assertFalse(bot.is_valid_listing_url("mvgm", "https://ikwilhuren.nu/aanbod/zorgwoningen"))
+
+    def test_non_utrecht_detail_footer_does_not_change_city(self):
+        listing = bot.Listing("nmg", "Elst – Rentambt 68", "https://nmgwonen.nl/woning/elst-rentambt-68")
+        html = '<html><h1>Elst – Rentambt 68</h1><p>75 m² € 1.750 per maand beschikbaar</p><footer>Ook actief in Utrecht</footer></html>'
+        enriched = bot.extract_detail_listing(listing, html)
+        self.assertIsNone(enriched.city)
+
+    def test_euro_after_amount_is_parsed(self):
+        self.assertEqual(bot.parse_rent("1.595 euro/maand"), 1595)
 
     def test_vbt_sapper_payload(self):
         html = r'''<script>__SAPPER__={houses:[{address:{city:"Utrecht",house:"Testlaan 10"},prices:{rental:{price:1650,type:"month"}},plot:72,rooms:3,acceptance:"2026-08-01",url:"\u002Fwoning\u002Futrecht-testlaan-10"}]}</script>'''

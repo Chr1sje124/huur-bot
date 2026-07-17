@@ -142,12 +142,12 @@ TRACKING_PARAMS = {"gclid", "fbclid", "ref", "source"}
 SOURCE_LINK_PATTERNS = {
     "funda": (r"/detail/huur/",),
     "rebo": (r"/nl/aanbod/",),
-    "mvgm": (r"/aanbod/(?!utrecht/?$)[^?#]+",),
+    "mvgm": (r"/aanbod/(?:huurwoning|woning|appartement|huis)/[^?#]+",),
     "vesteda": (r"/nl/huurwoning[^?#]*/[^/?#]+-\d+/?$",),
     "vbt": (r"/woning/",),
-    "nmg": (r"/woning/", r"/woningen/[^/?#]+/?$"),
+    "nmg": (r"/woning/",),
     "holland2stay": (r"/woningaanbod/[^/?#]+\.html",),
-    "heimstaden": (r"/nl/huurwoningen/[^/?#]+",),
+    "heimstaden": (r"/nl/huurwoningen/[^/?#]*(?:m²|m2|[0-9a-f]{8}-)[^/?#]*",),
     "pararius": (r"/(?:appartement|huis|kamer)-te-huur/",),
     "woningnet": (r"/(?:aanbod|woningaanbod|advertentie)/[^?#]+",),
     "woonin": (r"/(?:woning|woningaanbod|aanbod)/[^?#]+",),
@@ -175,6 +175,21 @@ def canonical_url(url: str) -> str:
     ]
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, urlencode(query), ""))
+
+
+def is_valid_listing_url(source: str, url: str, base_url: str = "") -> bool:
+    canonical = canonical_url(url)
+    if not urlsplit(canonical).netloc or urlsplit(canonical).path == "/":
+        return False
+    if base_url and canonical == canonical_url(base_url):
+        return False
+    patterns = SOURCE_LINK_PATTERNS.get(source.lower(), ())
+    if patterns and not any(re.search(pattern, canonical, re.I) for pattern in patterns):
+        return False
+    path = urlsplit(canonical).path.lower()
+    if source.lower() == "mvgm" and path.rstrip("/") in {"/aanbod/utrecht", "/aanbod/zorgwoningen"}:
+        return False
+    return True
 
 
 def load_config() -> dict:
@@ -310,6 +325,7 @@ def parse_rent(text: str) -> Optional[int]:
     patterns = (
         r"(?:€|EUR)\s*([0-9][0-9., ]{2,8})",
         r"([0-9][0-9., ]{2,8})\s*(?:,-)?\s*(?:/\s*(?:mnd|maand)|p/?m|per maand)",
+        r"([0-9][0-9., ]{2,8})\s*(?:euro|eur)\s*(?:/\s*(?:mnd|maand)|p/?m|per maand)",
     )
     for pattern in patterns:
         for match in re.finditer(pattern, cleaned, re.I):
@@ -639,15 +655,13 @@ def extract_jsonld_listings(source: str, base_url: str, soup: BeautifulSoup) -> 
             city = None
             if isinstance(address, dict):
                 city = address.get("addressLocality")
-            if not city and "utrecht" in base_url.lower():
-                city = "Utrecht"
-
-            if name and url:
+            absolute_url = urljoin(base_url, str(url)) if url else ""
+            if name and url and is_valid_listing_url(source, absolute_url, base_url):
                 listings.append(
                     Listing(
                         source=source,
                         title=clean_text(str(name))[:140],
-                        url=urljoin(base_url, str(url)),
+                        url=absolute_url,
                         city=city,
                         rent=rent,
                         area=area,
@@ -699,7 +713,7 @@ def extract_from_blocks(source: str, base_url: str, soup: BeautifulSoup) -> list
         if not title or len(title) < 4:
             title = text[:90]
 
-        city = "Utrecht" if "utrecht" in f"{text} {url} {base_url}".lower() else None
+        city = "Utrecht" if "utrecht" in f"{text} {url}".lower() else None
         availability, available_from = parse_availability(text)
 
         listings.append(
@@ -746,7 +760,7 @@ def extract_specialized_listings(source: str, base_url: str, soup: BeautifulSoup
             url = urljoin(base_url, link["href"])
             availability, available_from = parse_availability(text)
             postcode = parse_postcode(text)
-            city = "Utrecht" if "utrecht" in f"{text} {url} {base_url}".lower() or (postcode and postcode[:4] in UTRECHT_POSTCODE_PREFIXES) else None
+            city = "Utrecht" if "utrecht" in f"{text} {url}".lower() or (postcode and postcode[:4] in UTRECHT_POSTCODE_PREFIXES) else None
             listings.append(Listing(source, title[:140], url, city, parse_rent(text), parse_area(text), parse_rooms(text), availability, available_from, postcode))
     return dedupe_listings(listings)
 
@@ -773,14 +787,18 @@ def extract_detail_listing(listing: Listing, html: str) -> Listing:
         if canonical_url(candidate.url) == canonical_url(listing.url):
             merged = merge_listings(merged, candidate)
     text = clean_text(soup.get_text(" "))
+    heading = clean_text(soup.find("h1").get_text(" ") if soup.find("h1") else listing.title)[:140]
+    postcode = parse_postcode(text)
+    location_probe = Listing(listing.source, heading, listing.url, listing.city, postcode=postcode)
+    city = listing.city or ("Utrecht" if is_utrecht_location(location_probe, {"city": "Utrecht"}) else None)
     availability, available_from = parse_availability(text)
     detail = Listing(
         listing.source,
-        clean_text((soup.find("h1") or {}).get_text(" ") if soup.find("h1") else listing.title)[:140],
+        heading,
         listing.url,
-        listing.city or ("Utrecht" if "utrecht" in text.lower() else None),
+        city,
         parse_rent(text), parse_area(text), parse_rooms(text), availability,
-        available_from, parse_postcode(text),
+        available_from, postcode,
     )
     return merge_listings(merged, detail)
 
@@ -1146,6 +1164,8 @@ def check_once(
         price_drop = previous_rent is not None and listing.rent is not None and listing.rent < previous_rent
         price_increase = previous_rent is not None and listing.rent is not None and listing.rent > previous_rent
         should_notify = listing.uid not in seen
+        current_classification = classifications.get(listing.uid, "match")
+        should_notify = should_notify or ((previous or {}).get("classification") == "possible_match" and current_classification == "match")
         should_notify = should_notify or (price_drop and notify_options.get("notify_on_price_drop", True))
         should_notify = should_notify or (price_increase and notify_options.get("notify_on_price_increase", False))
         if not should_notify:
@@ -1162,6 +1182,7 @@ def check_once(
                     "source": listing.source, "url": canonical_url(listing.url), "title": listing.title,
                     "rent": listing.rent, "area": listing.area, "rooms": listing.rooms, "city": listing.city,
                     "availability": listing.availability, "available_from": listing.available_from, "postcode": listing.postcode,
+                    "classification": current_classification,
                     "first_seen_at": now, "last_seen_at": now, "last_notified_at": None,
                 }
             logging.info(
@@ -1190,6 +1211,7 @@ def check_once(
                 "city": listing.city or (previous or {}).get("city"),
                 "availability": listing.availability, "available_from": listing.available_from or (previous or {}).get("available_from"),
                 "postcode": listing.postcode or (previous or {}).get("postcode"),
+                "classification": current_classification,
                 "first_seen_at": (previous or {}).get("first_seen_at", now), "last_seen_at": now, "last_notified_at": now,
             }
         save_seen(seen)

@@ -39,7 +39,9 @@ notifications:
   source_failure_repeat_hours: 12
   notify_on_price_drop: true
   notify_on_price_increase: false
-  send_possible_matches: true
+  # Mogelijke matches blijven zichtbaar in logs/Summary, maar veroorzaken
+  # geen Telegramstorm zolang bronparsers nog onvolledige data leveren.
+  send_possible_matches: false
 
 state:
   stale_after_days: 60

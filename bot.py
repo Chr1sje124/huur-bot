@@ -209,14 +209,34 @@ def source_listing_blocks(source: str, soup: BeautifulSoup) -> list:
 
 
 def dedupe_listings(listings: Iterable[Listing]) -> list[Listing]:
-    out = []
-    seen = set()
-    for l in listings:
-        key = canonical_url(l.url)
-        if key not in seen:
-            out.append(l)
-            seen.add(key)
-    return out
+    """Combineer dubbele advertenties en behoud de meest complete gegevens."""
+    merged: dict[str, Listing] = {}
+    order: list[str] = []
+
+    for listing in listings:
+        key = canonical_url(listing.url)
+        current = merged.get(key)
+
+        if current is None:
+            merged[key] = listing
+            order.append(key)
+            continue
+
+        merged[key] = Listing(
+            source=current.source or listing.source,
+            title=(
+                listing.title
+                if len(listing.title) > len(current.title)
+                else current.title
+            ),
+            url=current.url,
+            city=current.city or listing.city,
+            rent=current.rent if current.rent is not None else listing.rent,
+            area=current.area if current.area is not None else listing.area,
+            rooms=current.rooms if current.rooms is not None else listing.rooms,
+        )
+
+    return [merged[key] for key in order]
 
 
 def scrape_generic(source: str, urls: list[str]) -> list[Listing]:
@@ -432,8 +452,47 @@ def send_telegram(config: dict, text: str) -> None:
 
 def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[int, int]:
     listings = scrape_all(config)
-    matches = [l for l in listings if matches_filters(l, config.get("filters", {}))]
-    logging.info("%d listings gevonden, %d voldoen aan filters", len(listings), len(matches))
+    filters = config.get("filters", {})
+
+    matches = [
+        listing
+        for listing in listings
+        if matches_filters(listing, filters)
+    ]
+
+    missing_rent = sum(
+        listing.rent is None
+        for listing in listings
+    )
+
+    missing_area = sum(
+        listing.area is None
+        for listing in listings
+    )
+
+    over_max_rent = sum(
+        listing.rent is not None
+        and listing.rent > int(filters.get("max_rent", 999999))
+        for listing in listings
+    )
+
+    under_min_area = sum(
+        listing.area is not None
+        and listing.area < int(filters.get("min_area", 0))
+        for listing in listings
+    )
+
+    logging.info(
+        "%d listings gevonden, %d voldoen aan filters | "
+        "prijs ontbreekt: %d | oppervlakte ontbreekt: %d | "
+        "te duur: %d | te klein: %d",
+        len(listings),
+        len(matches),
+        missing_rent,
+        missing_area,
+        over_max_rent,
+        under_min_area,
+    )
 
     sent = 0
     notify_existing = bool(config.get("notify_existing_on_first_run", True))
@@ -452,17 +511,18 @@ def check_once(config: dict, seen: set[str], first_run: bool = False) -> tuple[i
         save_seen(seen)
         sent += 1
     if bool(config.get("send_summary_when_no_new", False)) and sent == 0:
-        send_telegram(
-            config,
-            f"✅ Bot actief\n"
-            f"{len(listings)} listings gevonden\n"
-            f"{len(matches)} voldoen aan filters\n"
-            f"{sent} nieuwe meldingen verstuurd"
-        )
-    
-    seen.add(STATE_VERSION_MARKER)
-    save_seen(seen)
-    return len(matches), sent
+    send_telegram(
+        config,
+        f"✅ Bot actief\n"
+        f"{len(listings)} listings gevonden\n"
+        f"{len(matches)} voldoen aan filters\n\n"
+        f"Diagnose:\n"
+        f"• Prijs ontbreekt: {missing_rent}\n"
+        f"• Oppervlakte ontbreekt: {missing_area}\n"
+        f"• Boven maximale huur: {over_max_rent}\n"
+        f"• Onder minimale oppervlakte: {under_min_area}\n\n"
+        f"{sent} nieuwe meldingen verstuurd"
+    )
 
 def main() -> None:
     parser = argparse.ArgumentParser()

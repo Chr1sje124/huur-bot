@@ -408,7 +408,7 @@
       "city": "Utrecht",
       "first_seen_at": "2026-07-17T12:42:15.287398+00:00",
       "last_notified_at": "2026-07-17T12:42:15.287398+00:00",
-      "last_seen_at": "2026-07-21T11:30:34.515334+00:00",
+      "last_seen_at": "2026-07-21T12:59:23.225376+00:00",
       "postcode": "3521 HB",
       "rent": 1968,
       "rooms": null,
@@ -479,18 +479,18 @@
   },
   "sources": {
     "funda": {
-      "consecutive_failures": 65,
+      "consecutive_failures": 66,
       "error_fingerprint": "86866f6636033683",
       "last_error": "funda: blokkade bij https://www.funda.nl/zoeken/huur?selected_area=%5B%22utrecht%22%5D (verifiã«ren dat onze bezoekers echte mensen zijn)",
       "last_error_notification_at": "2026-07-21T07:13:55.759578+00:00",
-      "last_failure_at": "2026-07-21T11:30:35.051676+00:00",
+      "last_failure_at": "2026-07-21T12:59:23.778926+00:00",
       "last_success_at": "2026-07-17T12:07:13.379203+00:00"
     },
     "heimstaden": {
       "consecutive_failures": 0,
       "error_fingerprint": null,
       "last_error": null,
-      "last_success_at": "2026-07-21T11:30:35.051676+00:00"
+      "last_success_at": "2026-07-21T12:59:23.778926+00:00"
     },
     "mvgm": {
       "consecutive_failures": 0,
@@ -498,7 +498,7 @@
       "last_error": null,
       "last_error_notification_at": "2026-07-18T01:00:27.098364+00:00",
       "last_failure_at": "2026-07-20T15:16:40.342653+00:00",
-      "last_success_at": "2026-07-21T11:30:35.051676+00:00"
+      "last_success_at": "2026-07-21T12:59:23.778926+00:00"
     },
     "nmg": {
       "consecutive_failures": 0,
@@ -506,32 +506,32 @@
       "last_error": null,
       "last_error_notification_at": "2026-07-17T12:07:13.379203+00:00",
       "last_failure_at": "2026-07-19T16:15:46.672120+00:00",
-      "last_success_at": "2026-07-21T11:30:35.051676+00:00"
+      "last_success_at": "2026-07-21T12:59:23.778926+00:00"
     },
     "pararius": {
-      "consecutive_failures": 66,
+      "consecutive_failures": 67,
       "error_fingerprint": "3d9e3100d4366e71",
       "last_error": "ophalen mislukt na 3 pogingen: 403 Client Error: Forbidden for url: https://www.pararius.nl/huurwoningen/utrecht",
       "last_error_notification_at": "2026-07-21T07:13:55.759578+00:00",
-      "last_failure_at": "2026-07-21T11:30:35.051676+00:00"
+      "last_failure_at": "2026-07-21T12:59:23.778926+00:00"
     },
     "rebo": {
       "consecutive_failures": 0,
       "error_fingerprint": null,
       "last_error": null,
-      "last_success_at": "2026-07-21T11:30:35.051676+00:00"
+      "last_success_at": "2026-07-21T12:59:23.778926+00:00"
     },
     "vbt": {
       "consecutive_failures": 0,
       "error_fingerprint": null,
       "last_error": null,
-      "last_success_at": "2026-07-21T11:30:35.051676+00:00"
+      "last_success_at": "2026-07-21T12:59:23.778926+00:00"
     },
     "vesteda": {
       "consecutive_failures": 0,
       "error_fingerprint": null,
       "last_error": null,
-      "last_success_at": "2026-07-21T11:30:35.051676+00:00"
+      "last_success_at": "2026-07-21T12:59:23.778926+00:00"
     }
   },
   "version": 2
